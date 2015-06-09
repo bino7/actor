@@ -1,0 +1,24 @@
+<component name="libraryTable">
+  <library name="GOPATH &lt;actor&gt;">
+    <CLASSES>
+      <root url="file://$PROJECT_DIR$/../cdn" />
+      <root url="file://$PROJECT_DIR$/../auth" />
+      <root url="file://$PROJECT_DIR$/../cobb" />
+      <root url="file://$PROJECT_DIR$/../gigi" />
+      <root url="file://$PROJECT_DIR$/../gugu" />
+      <root url="file://$PROJECT_DIR$/../vivo" />
+      <root url="file://$PROJECT_DIR$/../.idea" />
+      <root url="file://$PROJECT_DIR$/../paxos" />
+      <root url="file://$PROJECT_DIR$/../imstor" />
+      <root url="file://$PROJECT_DIR$/../console" />
+      <root url="file://$PROJECT_DIR$/../martini" />
+      <root url="file://$PROJECT_DIR$/../github.com" />
+      <root url="file://$PROJECT_DIR$/../golang.org" />
+      <root url="file://$PROJECT_DIR$/../launchpad.net" />
+      <root url="file://$PROJECT_DIR$/../code.google.com" />
+      <root url="file://$PROJECT_DIR$/../groupcache_server" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>
