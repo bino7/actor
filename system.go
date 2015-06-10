@@ -22,11 +22,11 @@ func NewSystem(conf Config)*System{
         mutex:  sync.Mutex{},
     }
     s.Context=c
+    go run(s.Actor)
     return s
 }
 
 func ServerForever(system *System)error{
-    go run(system.Actor)
     for{
         time.Sleep(10*time.Second)
     }
