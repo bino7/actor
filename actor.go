@@ -9,23 +9,30 @@ type Handler interface{}
 
 type Actor struct{
     Name string
+    path string
     mailbox chan interface{}
     parent *Actor
     children []*Actor
     System *System
     Context *Context
-    handlers map[reflect.Type]Handler
+    handlers map[reflect.Type][]Handler
     injector inject.Injector
-    mutex sync.Mutex
+    mutex *sync.Mutex
 }
 
 func newActor(system *System,context *Context,parent *Actor,name string)*Actor{
-    mailbox:=make(chan interface{},256)
-    children:=[]*Actor
-    handlers:=make(map[string]Handler)
-    a:=& Actor{System:system, Context:context,parent:parent,Name:name,mailbox:mailbox,children:children,
-        handlers:handlers,injector:inject.New()}
-    return a
+    return & Actor{
+        Name:       name,
+        path:       "",
+        mailbox:    make(chan interface{},256),
+        parent:     parent,
+        children:   make([]*Actor,0),
+        System:     system,
+        Context:    context,
+        handlers:   make(map[reflect.Type][]Handler),
+        injector:   inject.New(),
+        mutex:      &sync.Mutex{},
+    }
 }
 
 
@@ -54,7 +61,7 @@ func (a *Actor)Handle(msg interface{}){
 }
 
 func (a *Actor)Tell(message interface{}){
-    a.Context.tell(a.Path,message)
+    a.Context.Tell(a.Path(),message)
 }
 
 func (a *Actor)lookup(names... string)*Actor{
@@ -65,7 +72,7 @@ func (a *Actor)lookup(names... string)*Actor{
             if len(names)==1 {
                 return c
             }else{
-                return c.lookup(names[1:])
+                return c.lookup(names[1:]...)
             }
         }
     }
@@ -89,11 +96,17 @@ func (a *Actor)remove(child *Actor){
     }
 }
 
-
-func (a *Actor)Path()string{
+func (a *Actor)updatePath(){
     path:="/"+a.Name
     if a.parent!=nil{
         path=a.parent.Path()+path
     }
-    return path
+    a.path=path
+}
+
+func (a *Actor)Path()string{
+    if a.path==""{
+        a.updatePath()
+    }
+    return a.path
 }
