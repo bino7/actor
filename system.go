@@ -12,8 +12,6 @@ type System struct{
     conf Config
     standalone bool
     zkConn *zk.Conn
-    zkEvent zk.Event
-
 }
 
 func NewSystem(conf Config)*System{
@@ -41,12 +39,26 @@ func (sys *System)ServerForever()(err error){
             log.Println("zookeeper server config not found standalone mode")
             sys.standalone=true
         }else{
-            sys.zkConn,sys.zkEvent,err=zk.Connect(zookeeperServers,sys.conf*time.Millisecond)
+            var event <- chan zk.Event
+            sys.zkConn,event,err=zk.Connect(zookeeperServers,sys.conf*time.Second)
             if err!=nil{
                 return
             }
-            sys.zkConn.C
+            go watch(sys,event)
         }
         time.Sleep(10*time.Second)
+    }
+}
+
+func watch(sys *System,event <- chan zk.Event){
+    for {
+        e := <- event
+        if e.Err!=nil {
+
+        }else{
+            if e.State!=zk.StateDisconnected {
+
+            }
+        }
     }
 }
