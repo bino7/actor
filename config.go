@@ -1,6 +1,9 @@
 package actor
 
 type Config struct{
-    zookeeperServers []string
-    tickTime    int
+    servers             []string
+    zookeeperServers    []string
+    tickTime            string
+    name                string
+    randName            string
 }

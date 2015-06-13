@@ -110,3 +110,13 @@ func (a *Actor)Path()string{
     }
     return a.path
 }
+
+func (a *Actor)ZooPath()string{
+    return system_path+a.Path()[len("/system"):len(a.Path())]
+}
+
+
+
+func (a *Actor)init(props map[string]interface{})error{
+    return nil
+}
