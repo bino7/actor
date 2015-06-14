@@ -28,7 +28,7 @@ var acl=[]zk.ACL{
 
 type System struct{
     *Context
-    *Actor
+    ActorBase
     conf        Config
     zkConn      *zk.Conn
     role        Role
@@ -36,39 +36,53 @@ type System struct{
 }
 
 func NewSystem(conf Config)*System{
-    s:=new(System)
+    s:=System{}
 
     if conf.name==""{
-        conf.name=="worker_1"
+        conf.name=randName()
     }
-    if conf.randName==""{
-        conf.randName=randName()
+    if conf.displayName==""{
+        conf.displayName=conf.name
     }
 
     s.conf=conf
+
     c:=& Context{
         system:     s,
         conf:       conf,
         actors:     make(map[string] *Actor),
         mutex:      sync.Mutex{},
     }
-    a:=newActor(s,c,nil,"system")
-    s.Actor=a
-    c.actor=a
-    c.actors["system"]=a
-    go run(s.Actor)
+
+    c.actors["system"]=s
+
     return s
 }
 
-func (sys *System)ServerForever()(err error){
-    for{
-        zookeeperServers:=sys.conf.zookeeperServers
-        if zookeeperServers==nil || len(zookeeperServers)==0{
-            log.Println("zookeeper server config not found standalone mode")
-        }else{
-            sys.connectToZK()
-        }
+func (s *System)Init(props map[string]interface{}) error{
+    zookeeperServers:=s.conf.zookeeperServers
+    if zookeeperServers==nil || len(zookeeperServers)==0{
+        log.Println("zookeeper server config not found standalone mode")
+    }else{
+        s.connectToZK()
     }
+    return nil
+}
+
+func (s *System)PreStart() error{
+    return nil
+}
+
+func (s *System)Receive(msg interface{}){
+
+}
+
+func (s *System)PreStop() error{
+    return nil
+}
+
+func (s *System)ServerForever(){
+    run(s)
 }
 
 func (sys *System)connectToZK(){
@@ -83,7 +97,7 @@ func (sys *System)connectToZK(){
 
     sys.ensureBaseDir()
     sys.register()
-    sys.join()
+    //sys.join()
 }
 
 /*
@@ -97,46 +111,51 @@ func (sys *System)connectToZK(){
            /actor_2(p,node of actor_2)
 */
 const(
-    root_path       = "/actors"
-    servers_path    = "/actors/servers"
-    workers_path    = "/actors/workers"
-    system_path     = "/actors/system"
+    root_path           = "/actors"
+    logins_path         = root_path + "/logins"
+    systems_path        = root_path + "/systems"
+    system_path         = root_path + "/system"
+    dispatchers_path    = system_path + "/dispatchers"
+    process_path        = system_path + "/process"
 )
 
 func (sys *System)ensureBaseDir(){
 
     sys.zkConn.Create(root_path,[]byte{},zk.FlagPersistent,acl)
-    sys.zkConn.Create(servers_path,[]byte{},zk.FlagPersistent,acl)
-    sys.zkConn.Create(workers_path,[]byte{},zk.FlagPersistent,acl)
+    sys.zkConn.Create(logins_path,[]byte{},zk.FlagPersistent,acl)
+    sys.zkConn.Create(systems_path,[]byte{},zk.FlagPersistent,acl)
     sys.zkConn.Create(system_path,[]byte{},zk.FlagPersistent,acl)
+    sys.zkConn.Create(process_path,[]byte{},zk.FlagPersistent,acl)
 }
 
 func (sys *System)register(){
     name:=sys.conf.name
+    displayName:=sys.conf.displayName
 
-    existed,_,_:=sys.zkConn.Exists(workers_path+"/"+name)
+    existed,_,_:=sys.zkConn.Exists(systems_path+"/"+displayName)
 
     for existed{
-        if randName,_,err:=sys.zkConn.Get(workers_path+"/"+name);err!=nil{
-           continue
-        }else if randName==sys.conf.randName{
-            //registered
-            return
-        }else if i:=strings.LastIndex(name,"_");i!=-1 {
-            name=name[0:i]+string(strconv.Atoi(name[i:len(name)])+1)
+        if i:=strings.LastIndex(displayName,"_");i!=-1 {
+            displayName=displayName[0:i]+string(strconv.Atoi(displayName[i:len(displayName)])+1)
         }else{
-            name=name+"_1"
+            displayName=displayName+"_1"
         }
-        existed,_,_=sys.zkConn.Exists(workers_path+"/"+name)
+        existed,_,_=sys.zkConn.Exists(systems_path+"/"+displayName)
     }
 
-    sys.conf.name=name
+    sys.conf.displayName=displayName
 
-    sys.zkConn.Create(workers_path+"/"+sys.conf.name,[]byte{},zk.FlagPersistent,acl)
+    path,err:=sys.zkConn.Create(systems_path+"/"+sys.conf.displayName,[]byte{},zk.FlagEphemeral,acl)
+    if err!=nil{
+        panic(err)
+    }
+
+    sys.zkConn.Set(path,[]byte(name),int32(0))
+
 }
 
 func (sys *System)join(){
-    path:=workers_path+"/"+sys.conf.name+"/connecting"
+    path:= systems_path+"/"+sys.conf.name+"/connecting"
 
     _,err:=sys.zkConn.Create(path,[]byte{},zk.FlagEphemeral,acl)
     if err!=nil{
@@ -147,7 +166,7 @@ func (sys *System)join(){
         panic(err)
     }
 
-    path,err=sys.zkConn.Create(servers_path+"/",[]byte{},zk.FlagEphemeralSequential,acl)
+    path,err=sys.zkConn.Create(logins_path+"/",[]byte{},zk.FlagEphemeralSequential,acl)
     if err!=nil{
         panic(err)
     }
@@ -156,7 +175,7 @@ func (sys *System)join(){
         panic(err)
     }
 
-    go sys.watchServersPath()
+    go sys.watchLoginsPath()
 
 }
 
@@ -165,11 +184,11 @@ type leader struct {
     addr    string
 }
 var leader leader
-func (sys *System)watchServersPath(){
+func (sys *System)watchLoginsPath(){
     for {
-        paths, _, event , _ := sys.zkConn.ChildrenW(servers_path)
+        paths, _, event , _ := sys.zkConn.ChildrenW(logins_path)
         lname,_,_:=sys.zkConn.Get(paths[0])
-        addr,_,_:=sys.zkConn.Get(workers_path+"/"+lname+"/connecting")
+        addr,_,_:=sys.zkConn.Get(systems_path+"/"+lname+"/connecting")
         leader=leader{
             lname,
             addr,
@@ -192,6 +211,10 @@ func randName()(name string){
         name+=chars[rand.Intn(cs)]
     }
     return
+}
+
+func (s *System)ZKConn() *zk.Conn{
+    return s.zkConn
 }
 
 /*func (sys *System)watch(event <- chan zk.Event){

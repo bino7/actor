@@ -5,5 +5,6 @@ type Config struct{
     zookeeperServers    []string
     tickTime            string
     name                string
-    randName            string
+    displayName         string
+    port                int
 }

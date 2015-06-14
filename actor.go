@@ -3,40 +3,76 @@ import (
     "reflect"
     "github.com/codegangsta/inject"
     "sync"
+    "cmd/api/testdata/src/pkg/p1"
 )
 
+type Actor interface{
+    Init(props map[string]interface{}) error
+    PreStart() error
+    Receive(msg interface{})
+    PreStop() error
+
+    /*implement by ActorBase*/
+    Name() string
+    Path() string
+    Parent() *Actor
+    System() *System
+    Context() *Context
+    Tell(msg interface{})
+    mailbox() <-chan interface{}
+    handle(msg interface{})
+}
 type Handler interface{}
 
-type Actor struct{
-    Name string
-    path string
-    mailbox chan interface{}
-    parent *Actor
-    children []*Actor
-    System *System
-    Context *Context
-    handlers map[reflect.Type][]Handler
-    injector inject.Injector
-    mutex *sync.Mutex
+/* ActorBase is not a actor, it is base behavior of a actor*/
+type ActorBase struct{
+    name            string
+    path            string
+    mailbox         chan interface{}
+    parent          Actor
+    children        []Actor
+    system          *System
+    context         *Context
+    handlers        map[reflect.Type][]Handler
+    injector        inject.Injector
+    mutex           *sync.Mutex
 }
 
-func newActor(system *System,context *Context,parent *Actor,name string)*Actor{
-    return & Actor{
-        Name:       name,
+func NewActorBase(system *System,context *Context,parent *Actor,name string) *ActorBase {
+    return & ActorBase{
+        name:       name,
         path:       "",
         mailbox:    make(chan interface{},256),
         parent:     parent,
-        children:   make([]*Actor,0),
-        System:     system,
-        Context:    context,
+        children:   make([]Actor,0),
+        system:     system,
+        context:    context,
         handlers:   make(map[reflect.Type][]Handler),
         injector:   inject.New(),
         mutex:      &sync.Mutex{},
     }
 }
 
+func (a *ActorBase)Name() string {
+    return a.name
+}
+func (a *ActorBase)Path()string{
+    return a.path
+}
+func (a *ActorBase)Parent() *Actor {
+    return a.parent
+}
+func (a *ActorBase)System() *System {
+    return a.system
+}
+func (a *ActorBase)Context() *Context {
+    return a.context
+}
+func (a *ActorBase)Tell(msg interface{}){
+    a.Context.Tell(a.Path(),msg)
+}
 
-func (a *Actor)AddHandler(_type reflect.Type,handlers ...Handler){
+func (a *ActorBase)AddHandler(_type reflect.Type,handlers ...Handler){
     for _,h:=range handlers{
         validateHandler(h,_type)
     }
@@ -51,7 +87,7 @@ func validateHandler(h Handler,_type reflect.Type)bool{
     return mt.In(0)==_type
 }
 
-func (a *Actor)Handle(msg interface{}){
+func (a *ActorBase)handle(msg interface{}){
     _type:=reflect.TypeOf(msg)
     handlers:=a.handlers[_type]
     a.injector.Map(msg)
@@ -60,32 +96,13 @@ func (a *Actor)Handle(msg interface{}){
     }
 }
 
-func (a *Actor)Tell(message interface{}){
-    a.Context.Tell(a.Path(),message)
-}
-
-func (a *Actor)lookup(names... string)*Actor{
-    a.mutex.Lock()
-    defer a.mutex.Unlock()
-    for _,c:=range a.children{
-        if c.Name==names[0]{
-            if len(names)==1 {
-                return c
-            }else{
-                return c.lookup(names[1:]...)
-            }
-        }
-    }
-    return nil
-}
-
-func (a *Actor)add(child *Actor){
+func (a *ActorBase)add(child *Actor){
     a.mutex.Lock()
     defer a.mutex.Unlock()
     a.children=append(a.children,child)
 }
 
-func (a *Actor)remove(child *Actor){
+func (a *ActorBase)remove(child *Actor){
     a.mutex.Lock()
     defer a.mutex.Unlock()
     for i,c:=range a.children{
@@ -96,27 +113,10 @@ func (a *Actor)remove(child *Actor){
     }
 }
 
-func (a *Actor)updatePath(){
-    path:="/"+a.Name
-    if a.parent!=nil{
-        path=a.parent.Path()+path
-    }
-    a.path=path
-}
-
-func (a *Actor)Path()string{
-    if a.path==""{
-        a.updatePath()
-    }
-    return a.path
-}
-
-func (a *Actor)ZooPath()string{
+func (a *ActorBase)ZooPath()string{
     return system_path+a.Path()[len("/system"):len(a.Path())]
 }
 
 
 
-func (a *Actor)init(props map[string]interface{})error{
-    return nil
-}
+
