@@ -10,7 +10,7 @@ type Actor interface{
     Init(props map[string]interface{}) error
     PreStart() error
     Receive(msg interface{})
-    PreStop() error
+    PreStop()  error
 
     /*implement by ActorBase*/
     Name() string
@@ -21,6 +21,9 @@ type Actor interface{
     Tell(msg interface{})
     mailbox() <-chan interface{}
     handle(msg interface{})
+    start()
+    stop()
+    running() bool
 }
 type Handler interface{}
 
@@ -36,6 +39,7 @@ type ActorBase struct{
     handlers        map[reflect.Type][]Handler
     injector        inject.Injector
     mutex           *sync.Mutex
+    running         bool
 }
 
 func NewActorBase(system *System,context *Context,parent *Actor,name string) *ActorBase {
@@ -80,6 +84,9 @@ func (a *ActorBase)AddHandler(_type reflect.Type,handlers ...Handler){
 }
 
 func validateHandler(h Handler,_type reflect.Type)bool{
+    if reflect.TypeOf(h).Kind() != reflect.Func{
+        return false
+    }
     mt:=reflect.TypeOf(h)
     if mt.NumIn()!=1 {
         return false
@@ -115,6 +122,16 @@ func (a *ActorBase)remove(child *Actor){
 
 func (a *ActorBase)ZooPath()string{
     return system_path+a.Path()[len("/system"):len(a.Path())]
+}
+
+func (a *ActorBase)start(){
+    a.running=true
+}
+func (a *ActorBase)running()bool{
+    return a.running
+}
+func (a *ActorBase)stop(){
+    a.running=false
 }
 
 

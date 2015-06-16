@@ -6,5 +6,6 @@ type Config struct{
     tickTime            string
     name                string
     displayName         string
-    port                int
+    dispatcher_port     int
+    dispatcher_size     int
 }

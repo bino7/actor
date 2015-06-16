@@ -8,14 +8,15 @@ import (
     "strings"
     "strconv"
     "os"
+    "net"
+    "hash/fnv"
 )
 
 type Role int
 
 const(
-    Leader Role = 1 << iota
-    Worker
-    Dispatcher
+    Leader_Role      Role = 1 << iota
+    Dispatcher_Role
 )
 
 var acl=[]zk.ACL{
@@ -29,10 +30,11 @@ var acl=[]zk.ACL{
 type System struct{
     *Context
     ActorBase
-    conf        Config
-    zkConn      *zk.Conn
-    role        Role
-    addr        string
+    conf            Config
+    zkConn          *zk.Conn
+    role            Role
+    laddr           string
+    dispatcherPath  string
 }
 
 func NewSystem(conf Config)*System{
@@ -56,10 +58,18 @@ func NewSystem(conf Config)*System{
 
     c.actors["system"]=s
 
+    if ifi,err:=net.InterfaceByName("wlan0");err!=nil {
+        panic(err)
+    }else{
+        addrs,_:=ifi.Addrs()
+        s.laddr=strings.Split(addrs[0],"/")[0]
+    }
+
     return s
 }
 
 func (s *System)Init(props map[string]interface{}) error{
+
     zookeeperServers:=s.conf.zookeeperServers
     if zookeeperServers==nil || len(zookeeperServers)==0{
         log.Println("zookeeper server config not found standalone mode")
@@ -85,18 +95,19 @@ func (s *System)ServerForever(){
     run(s)
 }
 
-func (sys *System)connectToZK(){
+func (s *System)connectToZK(){
 
-    zookeeperServers:=sys.conf.zookeeperServers
-    d,_:=time.ParseDuration(sys.conf.tickTime)
+    zookeeperServers:=s.conf.zookeeperServers
+    d,_:=time.ParseDuration(s.conf.tickTime)
     var err error
-    sys.zkConn,_,err=zk.Connect(zookeeperServers,d)
+    s.zkConn,_,err=zk.Connect(zookeeperServers,d)
     if err!=nil{
         panic(error)
     }
+    s.ensureBaseDir()
+    s.register()
+    s.registerDispatcher()
 
-    sys.ensureBaseDir()
-    sys.register()
     //sys.join()
 }
 
@@ -111,7 +122,7 @@ func (sys *System)connectToZK(){
            /actor_2(p,node of actor_2)
 */
 const(
-    root_path           = "/actors"
+    root_path           = "/actor"
     logins_path         = root_path + "/logins"
     systems_path        = root_path + "/systems"
     system_path         = root_path + "/system"
@@ -125,6 +136,7 @@ func (sys *System)ensureBaseDir(){
     sys.zkConn.Create(logins_path,[]byte{},zk.FlagPersistent,acl)
     sys.zkConn.Create(systems_path,[]byte{},zk.FlagPersistent,acl)
     sys.zkConn.Create(system_path,[]byte{},zk.FlagPersistent,acl)
+    sys.zkConn.Create(dispatchers_path,[]byte{},zk.FlagPersistent,acl)
     sys.zkConn.Create(process_path,[]byte{},zk.FlagPersistent,acl)
 }
 
@@ -179,6 +191,34 @@ func (sys *System)join(){
 
 }
 
+func (s *System)registerDispatcher(){
+
+    if ifi,err:=net.InterfaceByName("wlan0");err!=nil{
+        panic(err)
+    }else {
+        laddrs, _ := ifi.Addrs()
+        laddr := strings.Split(laddrs[0].String(), "/")[0]
+        h := fnv.New64()
+        h.Write([]byte(laddr))
+        dn := h.Sum64()%s.conf.dispatcher_size
+        s.ZKConn().Create(dispatchers_path+"/"+dn,[]byte{},zk.FlagPersistent,acl)
+        s.dispatcherPath=dispatchers_path+"/"+dn+"/"
+
+    }
+    path,_:=s.ZKConn().Create(s.dispatcherPath,[]byte{},zk.FlagEphemeralSequential,acl)
+    s.ZKConn().Set(path,s.conf.displayName)
+    _,_,event,_:= s.ZKConn().ChildrenW(s.dispatcherPath)
+    go s.watchDispatcher(event)
+}
+
+func (s *System)watchDispatcher(event zk.Event){
+    <- event
+    dispatcherClients,_, event, _:=s.ZKConn().ChildrenW(s.dispatcherPath)
+    leader,_,_:=s.ZKConn().Get(dispatcherClients[0])
+    s.onDispatcherChanged(leader)
+    go s.watchDispatcher(event)
+}
+
 type leader struct {
     name    string
     addr    string
@@ -216,6 +256,25 @@ func randName()(name string){
 func (s *System)ZKConn() *zk.Conn{
     return s.zkConn
 }
+
+func (s *System)onDispatcherChanged(leader string){
+
+    if leader==s.conf.displayName {
+        s.setRole(Dispatcher)
+    }
+
+    s.Context.onDispatcherChanged(leader)
+}
+
+
+func (s *System)setRole(set Role){
+    s.role=s.role|set
+}
+
+func (s *System)unsetRole(unset Role){
+    s.role=s.role^unset
+}
+
 
 /*func (sys *System)watch(event <- chan zk.Event){
     for {
