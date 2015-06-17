@@ -92,7 +92,7 @@ func (s *System)PreStop() error{
 }
 
 func (s *System)ServerForever(){
-    run(s)
+    s.Context.startActor(s)
 }
 
 func (s *System)connectToZK(){
@@ -132,12 +132,12 @@ const(
 
 func (sys *System)ensureBaseDir(){
 
-    sys.zkConn.Create(root_path,[]byte{},zk.FlagPersistent,acl)
-    sys.zkConn.Create(logins_path,[]byte{},zk.FlagPersistent,acl)
-    sys.zkConn.Create(systems_path,[]byte{},zk.FlagPersistent,acl)
-    sys.zkConn.Create(system_path,[]byte{},zk.FlagPersistent,acl)
-    sys.zkConn.Create(dispatchers_path,[]byte{},zk.FlagPersistent,acl)
-    sys.zkConn.Create(process_path,[]byte{},zk.FlagPersistent,acl)
+    createDirectory(sys.zkConn,root_path)
+    createDirectory(sys.zkConn,logins_path)
+    createDirectory(sys.zkConn,systems_path)
+    createDirectory(sys.zkConn,system_path)
+    createDirectory(sys.zkConn,dispatchers_path)
+    createDirectory(sys.zkConn,process_path)
 }
 
 func (sys *System)register(){

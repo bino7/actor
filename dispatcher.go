@@ -2,7 +2,6 @@ package actor
 import (
     "net"
     "bufio"
-    "encoding/binary"
     "encoding/gob"
 )
 
@@ -53,7 +52,9 @@ func (d *Dispatcher)watchDispatcher(n int){
         panic(err)
     }
     dispatcher:=clients[0]
-    if d.dispatchers[dispatcher]==nil
+    if d.dispatchers[dispatcher]==nil{
+        
+    }
 }
 
 func (d *Dispatcher)listen() {
@@ -82,8 +83,46 @@ func (d *Dispatcher)onDispatcherChanged(leader string){
 }
 
 type DispatcherClient struct{
-    *Actor
-    dispatcher  net.TCPConn
+    *ActorBase
+    conn net.TCPConn
+    enc *gob.Encoder
+}
+
+func newDispatcherClient(system *System,context *Context,addr string) *RemoteActor {
+    conn,err:=net.Dial("tcp",addr)
+    if err!=nil {
+        panic(err)
+    }
+
+    writer:=bufio.NewWriter(conn)
+    enc:=gob.NewEncoder(writer)
+
+    return & RemoteActor{
+        NewActorBase(system,context,nil,"dispatcher"),
+        conn,
+        enc,
+    }
+}
+
+func (r *DispatcherClient)Init(props map[string]interface{}) error{return nil}
+func (r *DispatcherClient)Start() error{
+    go r.readLoop()
+    return nil
+}
+func (r *DispatcherClient)Receive(msg interface{}){
+    r.enc.Encode(msg)
+}
+func (r *DispatcherClient)Stop()  error{
+    r.conn.Close()
+    return nil
+}
+func (r *DispatcherClient)readLoop() {
+    reader := bufio.NewReader(r.conn)
+    dec:=gob.NewDecoder(reader)
+    for{
+        var msg RemoteMessage
+        dec.Decode(msg)
+    }
 }
 
 func (d *DispatcherClient)onDispatcherChanged(leader string){

@@ -34,7 +34,7 @@ func (c *Context)Tell(path string,message interface{})error{
     return nil
 }
 
-func start(a Actor){
+func (c *Context)startActor(a Actor){
     a.start()
     err:=a.PreStart()
     if err!=nil {
@@ -46,7 +46,7 @@ func start(a Actor){
     }
 }
 
-func stop(a Actor){
+func (c *Context)stopActor(a Actor){
     a.stop()
 }
 
@@ -62,13 +62,36 @@ func (c *Context)ActorOf(path string,_type reflect.Type,props map[string]interfa
         panic(err)
     }
     if existed {
-        ai,err:=c.readActorInfo(path)
-        if err!=nil{
-            panic(err)
+        if info,err:=c.readActorInfo(path);err!=nil{
+            return nil,err
+        }else {
+            a=newRemoteActor(c.system, c, info.Addr)
+            return a, nil
         }
-
-
     }
+
+    //create new actor
+    created:=createDirectory(c.system,path)
+    if created {
+        newObjPtr := reflect.New(_type.Elem()).Interface()
+        a=newObjPtr.(*Actor)
+        if err:=a.Init(props);err!=nil {
+            return nil,err
+        }
+        c.actors[path]=a
+        c.startActor(a)
+        return a,nil
+    }else{
+        return nil,nil
+    }
+}
+
+func (c *Context)ActorSelection(path string)*Actor{
+    a:=c.actors[path]
+    if a==nil && isExist(c.system,path){
+        a=newRemoteActor(c.system,c,path)
+    }
+    return a
 }
 
 func (c *Context)readActorInfo(path string)(*ActorInfo,error){
@@ -85,7 +108,6 @@ func (c *Context)readActorInfo(path string)(*ActorInfo,error){
 }
 
 type ActorInfo struct{
-    System  string
     Addr    string
 }
 

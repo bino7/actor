@@ -29,7 +29,6 @@ type Handler interface{}
 
 /* ActorBase is not a actor, it is base behavior of a actor*/
 type ActorBase struct{
-    name            string
     path            string
     mailbox         chan interface{}
     parent          Actor
@@ -42,9 +41,8 @@ type ActorBase struct{
     running         bool
 }
 
-func NewActorBase(system *System,context *Context,parent *Actor,name string) *ActorBase {
+func NewActorBase(system *System,context *Context,parent *Actor,path string) *ActorBase {
     return & ActorBase{
-        name:       name,
         path:       "",
         mailbox:    make(chan interface{},256),
         parent:     parent,
@@ -57,9 +55,6 @@ func NewActorBase(system *System,context *Context,parent *Actor,name string) *Ac
     }
 }
 
-func (a *ActorBase)Name() string {
-    return a.name
-}
 func (a *ActorBase)Path()string{
     return a.path
 }
