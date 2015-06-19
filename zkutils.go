@@ -1,6 +1,7 @@
 package actor
 
 import (
+	"errors"
 	"github.com/samuel/go-zookeeper/zk"
 	"sort"
 	"strconv"
@@ -12,7 +13,48 @@ type Lock struct {
 	lockPath, path string
 }
 
-func newLock(sys *System, path string) (*Lock, <-chan interface{}) {
+var (
+	ZKParentDirectoryNotExistedError = errors.New("ZKParentDirectoryNotExistedError")
+)
+
+func sequent(sys *System, path string) (leaderPath string, event <-chan interface{}, err error) {
+	existed, _, err := sys.ZKConn().Exists(parentPath(path))
+	if err != nil {
+		return
+	}
+	if existed == false {
+		err = ZKParentDirectoryNotExistedError
+		return
+	}
+	seqPath, err := sys.ZKConn().Create(path, []byte{}, zk.FlagEphemeralSequential, acl)
+	if err != nil {
+		return
+	}
+
+	children, _, _ := sys.ZKConn().Children(path)
+	seq := Seq{children}
+	sort.Sort(seq)
+	index := 0
+	for i, l := range children {
+		if l == seqPath {
+			index = i
+			break
+		}
+	}
+
+	if index == 0 {
+		leaderPath = seqPath
+		return
+	} else {
+		leaderPath = children[0]
+	}
+
+	_, _, event, _ = sys.ZKConn().ExistsW(children[index-1])
+	return
+
+}
+
+func lockDirectory(sys *System, path string) (*Lock, <-chan interface{}) {
 	lock_path, _ := sys.ZKConn().Create(path+"/lock", []byte{}, zk.FlagPersistent, acl)
 	p, _ := sys.ZKConn().Create(lock_path+"/", []byte{}, zk.FlagEphemeralSequential, acl)
 	lock := &Lock{
@@ -83,7 +125,7 @@ func createDirectory(sys *System, path string) bool {
 		createDirectory(sys, parent)
 	}
 
-	lock, event := newLock(sys, parent)
+	lock, event := lockDirectory(sys, parent)
 	defer lock.release()
 	<-event
 	if isExist(sys, path) {

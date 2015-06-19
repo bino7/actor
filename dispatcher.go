@@ -16,15 +16,16 @@ type Dispatcher struct {
 	remotes  map[int]net.Conn
 }
 
-func newDispatcher(system *System, context *Context, dispatcherSeqPath string) *Dispatcher {
+func newDispatcher(system *System, context *Context, isLeader bool, leaderAddr string) *Dispatcher {
 	di := dispatcherIndex(system.laddr, system.conf.dispatcher_size)
-	children, _, _ := system.ZKConn().Children(dispatchers_path + "/" + di)
-	isLeader := children[0] == dispatcherSeqPath
 
 	d := &Dispatcher{
 		NewBaseActor(system, context, system, dispatcher_path),
 		isLeader,
-		nil,
+		make(chan *RemoteMessage),
+		make(chan *RemoteMessage),
+		make(map[string]net.Conn),
+		make(map[int]net.Conn),
 	}
 
 	if isLeader {
@@ -37,23 +38,11 @@ func newDispatcher(system *System, context *Context, dispatcherSeqPath string) *
 		go d.listen(listener)
 
 	} else {
-		lastDispatcherSeqPath := ""
-		for i, child := range children {
-			if child == dispatcherSeqPath {
-				lastDispatcherSeqPath = children[i-1]
-			}
-		}
-		go d.watchToBecomeLeader(lastDispatcherSeqPath)
-
-		leader := children[0]
-		data, _, _ := d.System().ZKConn().Get(leader)
-		info := dispatcherInfoFromData(data)
-		addr := info.Addr
-		conn, err := net.Dial("tcp", addr)
+		conn, err := net.Dial("tcp", leaderAddr)
 		if err != nil {
 			panic(err)
 		}
-		d.remotes[dispatcherIndex(addr, system.conf.dispatcher_size)] = conn
+		d.remotes[dispatcherIndex(leaderAddr, system.conf.dispatcher_size)] = conn
 	}
 
 	return d
@@ -93,15 +82,7 @@ func (d *Dispatcher) receive(conn net.Conn, dispatcher chan *RemoteMessage) {
 		dispatcher <- msg
 	}
 }
-func (d *Dispatcher) watchToBecomeLeader(lastDispatcherPath string) {
-	existed, _, event, _ := d.System().ZKConn().ExistsW(lastDispatcherPath)
-	if existed == false {
-		d.becomeLeader()
-		return
-	}
-	<-event
-	d.becomeLeader()
-}
+
 func (d *Dispatcher) becomeLeader() {
 
 }

@@ -1,10 +1,8 @@
 package actor
 
-type Event struct {
-	Name string
-}
-
 var (
-	EventStart = *Event{"start"}
-	EventStop  = *Event{"stop"}
+	StartEvent             = new(interface{})
+	StopEvent              = new(interface{})
+	DispatcherEnableEvent  = new(interface{})
+	DispatcherDisableEvent = new(interface{})
 )

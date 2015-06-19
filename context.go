@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"sync"
+	"time"
 )
 
 type ActorNoFoundError struct {
@@ -45,9 +46,21 @@ func (c *Context) startActor(a Actor) error {
 				a.Receive(msg)
 			case e := <-a.events():
 				switch e {
-				case EventStop:
+				case StopEvent:
+					return
+				case DispatcherDisableEvent:
+					/* wait for dispatcer enable */
+					for {
+						time.Sleep(1 * time.Second)
+						e = <-a.events()
+						switch e {
+						case DispatcherEnableEvent:
+							break
+						case StopEvent:
+							return
+						}
 
-					break
+					}
 				}
 			}
 
@@ -56,7 +69,7 @@ func (c *Context) startActor(a Actor) error {
 }
 
 func (c *Context) stopActor(a Actor) error {
-	a.events() <- EventStop
+	a.events() <- StopEvent
 	return a.PreStop()
 }
 func (c *Context) LocalActorOf(path string, _type reflect.Type, props map[string]interface{}) (*Actor, error) {
@@ -119,6 +132,12 @@ func (c *Context) readActorInfo(path string) (*ActorInfo, error) {
 		dec.Decode(&ai)
 		return ai, nil
 	}
+}
+func (c *Context) onDispatcherEnable() {
+
+}
+func (c *Context) onDispatcherDisable() {
+
 }
 
 type ActorInfo struct {

@@ -127,10 +127,8 @@ const (
 	dispatchers_path = system_path + "/dispatchers"
 	process_path     = system_path + "/process"
 
-	dispatcher_path="/system/dispatcher"
+	dispatcher_path = "/system/dispatcher"
 )
-
-
 
 func (sys *System) ensureBaseDir() {
 
@@ -204,11 +202,34 @@ func (s *System) createDispatcher() {
 	s.laddr = laddr
 	di := dispatcherIndex(laddr, s.conf.dispatcher_size)
 	createDirectory(s, dispatchers_path+"/"+di)
-	path, _ := s.ZKConn().Create(dispatchers_path+"/"+di, dispatcherInfoData(s), zk.FlagEphemeralSequential, acl)
-
-
-	s.dispatcher = newDispatcher(s, s.Context(), path)
-	s.Context().actors[dispatcher_path]=s.dispatcher
+	leaderPath, event, err := sequent(s, dispatchers_path+"/"+di+"/")
+	if err != nil {
+		panic(err)
+	}
+	isLeader := true
+	leaderAddr := ""
+	if event != nil {
+		isLeader = false
+		go func() {
+			<-event
+			s.onBecomeDispatcherLeader()
+		}()
+	} else {
+		data, _, err := s.ZKConn().Get(leaderPath)
+		if err != nil {
+			panic(err)
+		}
+		info := dispatcherInfoFromData(data)
+		leaderAddr = info.Addr
+	}
+	s.dispatcher = newDispatcher(s, s.Context(), isLeader, leaderAddr)
+	s.Context().actors[dispatcher_path] = s.dispatcher
+}
+func (s *System) onBecomeDispatcherLeader() {
+	s.Context().stopActor(s.dispatcher)
+	s.Context().onDispatcherDisable()
+	s.dispatcher = newDispatcher(s, s.Context(), true, "")
+	s.Context().onDispatcherEnable()
 }
 
 type dispatcherInfo struct {
@@ -226,8 +247,8 @@ func dispatcherInfoData(s *System) []byte {
 	enc.Encode(info)
 	return buf.Bytes()
 }
-func dispatcherInfoFromData(b []byte) *dispatcherInfo {
-	buf := bytes.NewBuffer(b)
+func dispatcherInfoFromData(data []byte) *dispatcherInfo {
+	buf := bytes.NewBuffer(data)
 	info := new(dispatcherInfo)
 	dec := gob.NewDecoder(buf)
 	dec.Decode(info)
@@ -275,20 +296,6 @@ func (s *System) unsetRole(unset Role) {
 	s.role = s.role ^ unset
 }
 
-/*func (sys *System)watch(event <- chan zk.Event){
-    for {
-        e := <- event
-        if e.Err!=nil {
-            log.Println(e)
-        }else{
-            if e.State!=zk.StateDisconnected {
-                watchers:=sys.watchers[e.Path]
-                if watchers!=nil{
-                    for _,w:=range watchers{
-                        w.Tell(e)
-                    }
-                }
-            }
-        }
-    }
-}*/
+func (s *System) isRole(role Role)bool{
+	return s.role & role > 0
+}
