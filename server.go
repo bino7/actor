@@ -1,5 +1,5 @@
 package actor
 
-type Server struct{
-    ActorBase
+type Server struct {
+	BaseActor
 }

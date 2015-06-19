@@ -1,38 +1,32 @@
 package actor
+
 import (
-    "reflect"
+	"reflect"
 )
 
-
 type RemoteActor struct {
-    *ActorBase
-    path string
+	*BaseActor
+	path string
 }
 
-func newRemoteActor(system *System,context *Context,path string) *RemoteActor {
-    return & RemoteActor{
-        NewActorBase(system,context,nil,path),
-        path,
-    }
+func newRemoteActor(system *System, context *Context, path string) *RemoteActor {
+	return &RemoteActor{
+		NewBaseActor(system, context, system.dispatcher, path),
+		path,
+	}
 
 }
 
-func (r *RemoteActor)Init(props map[string]interface{}) error{return nil}
-func (r *RemoteActor)Start() error{
-    return nil
+func (r *RemoteActor) Init(props map[string]interface{}) error { return nil }
+func (r *RemoteActor) Start() error {
+	return nil
 }
-func (r *RemoteActor)Receive(msg interface{}){
-    if reflect.TypeOf(msg)!=reflect.TypeOf(RemoteMessage{}) {
-        panic("RemoteActor only accept RemoteMessage")
-    }
+func (r *RemoteActor) Receive(msg interface{}) {
+	if reflect.TypeOf(msg) != reflect.TypeOf(RemoteMessage{}) {
+		panic("RemoteActor only accept RemoteMessage")
+	}
+	r.System().dispatcher.Tell(msg)
 }
-func (r *RemoteActor)Stop()  error{
-    return nil
+func (r *RemoteActor) Stop() error {
+	return nil
 }
-type RemoteMessage struct{
-    From    string
-    To      string
-    Addr    string
-    Content []byte
-}
-

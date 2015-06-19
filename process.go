@@ -1,5 +1,5 @@
 package actor
 
-type Process struct{
-    ActorBase
+type Process struct {
+	BaseActor
 }
