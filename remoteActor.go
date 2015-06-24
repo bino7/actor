@@ -2,6 +2,7 @@ package actor
 
 import (
 	"reflect"
+	"log"
 )
 
 type RemoteActor struct {
@@ -29,10 +30,10 @@ func (r *RemoteActor) Receive(msg interface{}) {
 	tname:=reflect.TypeOf(msg).String()
 	data,err:=r.Context().Encode(tname,msg)
 	if err!=nil{
+		log.Println(err)
 		return
 	}
 	rmsg:=& RemoteMessage{
-		From:		"",
 		To:			r.path,
 		SysName: 	r.sysname,
 		Addr:		r.addr,

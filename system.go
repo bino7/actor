@@ -330,7 +330,7 @@ func (s *System) ZKConn() *zk.Conn {
 }
 
 func (s *System) Set(path string,data []byte){
-	s.ZKConn().Set(path,dispatcherInfoToData(s),int32(0))
+	s.ZKConn().Set(path,data,int32(0))
 }
 
 func (s *System) Get(path string)([]byte, *zk.Stat, error){

@@ -5,8 +5,6 @@ import (
 	"net"
 	"reflect"
 	"strconv"
-	"fmt"
-	"log"
 )
 
 type Dispatcher struct {
@@ -19,7 +17,6 @@ type Dispatcher struct {
 }
 
 func newDispatcher(system *System, context *Context, isLeader bool, leaderAddr string) (*Dispatcher,error) {
-	fmt.Println(isLeader)
 	di := dispatcherIndex(system.laddr, system.conf.DispatcherSize)
 
 	d := & Dispatcher{
@@ -51,15 +48,18 @@ func newDispatcher(system *System, context *Context, isLeader bool, leaderAddr s
 		}
 		data,_:=ConnectMessageEncode(msg)
 		conn.Write(data)
+
+		go d.receive(conn,d.imports)
 	}
 
+	go d.dispatchExports()
+	go d.dispatchImports()
 	return d,nil
 }
 func (d *Dispatcher) dispatchImports() {
 	lsysname:=d.System().displayName
 	for {
 		msg := <-d.imports
-		log.Println("dispatch import msg",msg)
 		if msg.SysName == lsysname {
 			value,_:=d.Context().Decode(msg.Type,msg.Data)
 			d.Context().Tell(msg.To, value)
@@ -79,19 +79,39 @@ func (d *Dispatcher) dispatchExports() {
 	for {
 		msg := <-d.exports
 		data,_:=RemoteMessageEncode(msg)
-		_, err := d.remotes[dispatcherIndex(msg.Addr, d.System().conf.DispatcherSize)].Write(data)
-		log.Println("send msg",msg)
-		if err != nil {
-			panic(err)
+		mdi:=dispatcherIndex(msg.Addr, d.System().conf.DispatcherSize)
+		ldi:=dispatcherIndex(d.System().laddr,d.System().conf.DispatcherSize)
+		if mdi==ldi && d.isLeader{
+			if msg.SysName==d.System().displayName{
+				d.imports <- msg
+			}else{
+				client:=d.clients[msg.SysName]
+				if client==nil {
+					continue
+				}
+				_,err:=client.Write(data)
+				if err!=nil {
+					panic(err)
+				}
+			}
+		}else {
+			remote := d.remotes[dispatcherIndex(msg.Addr, d.System().conf.DispatcherSize)]
+			if remote == nil {
+				continue
+			}
+			_, err := remote.Write(data)
+			if err != nil {
+				panic(err)
+			}
 		}
 	}
 }
 func (d *Dispatcher) receive(conn net.Conn, dispatcher chan *RemoteMessage) {
+	//lsysname:=d.System().displayName
 	for {
 		dec := gob.NewDecoder(conn)
 		msg := new(RemoteMessage)
 		dec.Decode(msg)
-		log.Println("receive msg",msg)
 		dispatcher <- msg
 	}
 }
@@ -105,7 +125,6 @@ func (d *Dispatcher) listen(listener net.Listener) {
 	msg := new(ConnectMessage)
 	dec.Decode(msg)
 	d.clients[msg.From]=conn
-	log.Println("new connection from",msg.From,conn.RemoteAddr().String())
 	go d.receive(conn, d.exports)
 }
 type ConnectMessage struct {
@@ -159,7 +178,6 @@ func (d *Dispatcher) Receive(msg interface{}) {
 		panic("only accept " + remoteMessageType.String())
 	}
 	m := msg.(*RemoteMessage)
-	log.Println("dispatcher receive msg",m)
 	d.exports <- m
 }
 
