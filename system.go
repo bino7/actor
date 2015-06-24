@@ -30,31 +30,35 @@ var acl = []zk.ACL{
 }
 
 type System struct {
-	*Context
-	BaseActor
+	*BaseActor
 	displayName string
 	conf        Config
 	zkConn      *zk.Conn
 	role        Role
 	laddr       string
 	dispatcher  *Dispatcher
+	mutex 		sync.Mutex
 }
 
 func NewSystem(conf Config) *System {
 	s := &System{}
-
-	if conf.name == "" {
-		conf.name = randName()
+	s.mutex=sync.Mutex{}
+	if conf.Name == "" {
+		conf.Name = randName()
 	}
 
 	s.conf = conf
 
 	c := &Context{
-		system: s,
-		conf:   conf,
-		actors: make(map[string]*Actor),
-		mutex:  sync.Mutex{},
+		system: 	s,
+		conf:   	conf,
+		actors: 	make(map[string]Actor),
+		encoders:	make(map[string]func(value interface{})([]byte,error)),
+		decoders: 	make(map[string]func(data []byte)(interface{},error)),
+		mutex:  	sync.Mutex{},
 	}
+
+	s.BaseActor=NewBaseActor(s,c,nil,"/system")
 
 	c.actors["system"] = s
 
@@ -62,7 +66,7 @@ func NewSystem(conf Config) *System {
 		panic(err)
 	} else {
 		addrs, _ := ifi.Addrs()
-		s.laddr = strings.Split(addrs[0], "/")[0]
+		s.laddr = strings.Split(addrs[0].String(), "/")[0]
 	}
 
 	return s
@@ -70,12 +74,7 @@ func NewSystem(conf Config) *System {
 
 func (s *System) Init(props map[string]interface{}) error {
 
-	zookeeperServers := s.conf.zookeeperServers
-	if zookeeperServers == nil || len(zookeeperServers) == 0 {
-		log.Println("zookeeper server config not found standalone mode")
-	} else {
-		s.connectToZK()
-	}
+
 	return nil
 }
 
@@ -91,22 +90,39 @@ func (s *System) PreStop() error {
 	return nil
 }
 
-func (s *System) ServerForever() {
-	s.Context.startActor(s)
+func (s *System) Start() chan interface{}{
+
+	zookeeperServers := s.conf.ZookeeperServers
+	if zookeeperServers == nil || len(zookeeperServers) == 0 {
+		log.Println("zookeeper server config not found")
+	} else {
+		s.connectToZK()
+	}
+
+	s.Context().startActor(s)
+	out:=make(chan interface{})
+	return out
 }
 
 func (s *System) connectToZK() {
 
-	zookeeperServers := s.conf.zookeeperServers
-	d, _ := time.ParseDuration(s.conf.tickTime)
+	zookeeperServers := s.conf.ZookeeperServers
 	var err error
-	s.zkConn, _, err = zk.Connect(zookeeperServers, d)
+	var event <-chan zk.Event
+	s.zkConn,event,err = zk.Connect(zookeeperServers, 2*time.Second)
 	if err != nil {
-		panic(error)
+		panic(err)
 	}
+	go s.watch(event)
 	s.ensureBaseDir()
 	s.register()
-	//sys.join()
+}
+
+func (s *System)watch(event <-chan zk.Event){
+	for e:= range event {
+		log.Println(e)
+	}
+	log.Println("quit watch ")
 }
 
 /*
@@ -114,8 +130,8 @@ func (s *System) connectToZK() {
 
    /actors(p)
    /actors/leader(p)
-   /actors/workers(p)/{name_1}(p,name of worker)/connect(e,note worker is connecting)
-                     /{name_2}(p,name of worker)/connect(e,note worker is connecting)
+   /actors/systems(p)/{name_1}(p,name of actor_server)
+                     /{name_2}(p,name of actor_server)
           /actor_1(p,node of actor_1)/actor_1_1(p,node of actor_1_1)
           /actor_2(p,node of actor_2)
 */
@@ -132,23 +148,25 @@ const (
 
 func (sys *System) ensureBaseDir() {
 
-	createDirectory(sys.zkConn, root_path)
-	createDirectory(sys.zkConn, logins_path)
-	createDirectory(sys.zkConn, systems_path)
-	createDirectory(sys.zkConn, system_path)
-	createDirectory(sys.zkConn, dispatchers_path)
-	createDirectory(sys.zkConn, process_path)
+	createDirectory(sys, root_path)
+	createDirectory(sys, logins_path)
+	createDirectory(sys, systems_path)
+	createDirectory(sys, system_path)
+	createDirectory(sys, dispatchers_path)
+	createDirectory(sys, process_path)
 }
 
 func (s *System) register() {
-	name := s.conf.name
+	name := s.conf.Name
 	displayName := name
 
 	existed, _, _ := s.zkConn.Exists(systems_path + "/" + displayName)
 
 	for existed {
 		if i := strings.LastIndex(displayName, "_"); i != -1 {
-			displayName = displayName[0:i] + string(strconv.Atoi(displayName[i:len(displayName)])+1)
+			n,_:=strconv.Atoi(displayName[i:len(displayName)])
+			n++
+			displayName = displayName[0:i] + string(n)
 		} else {
 			displayName = displayName + "_1"
 		}
@@ -174,7 +192,7 @@ type SystemInfo struct {
 
 func systemInfoToData(sys *System) []byte {
 	info := &SystemInfo{
-		sys.conf.name,
+		sys.conf.Name,
 		sys.laddr,
 	}
 	buf := new(bytes.Buffer)
@@ -200,35 +218,48 @@ func (s *System) createDispatcher() {
 	laddrs, _ := ifi.Addrs()
 	laddr := strings.Split(laddrs[0].String(), "/")[0]
 	s.laddr = laddr
-	di := dispatcherIndex(laddr, s.conf.dispatcher_size)
-	createDirectory(s, dispatchers_path+"/"+di)
-	leaderPath, event, err := sequent(s, dispatchers_path+"/"+di+"/")
+	di := dispatcherIndex(laddr, s.conf.DispatcherSize)
+	createDirectory(s,dispatchers_path+"/"+strconv.Itoa(di))
+	leader,seqPath, event, err := sequent(s, dispatchers_path+"/"+strconv.Itoa(di)+"/")
 	if err != nil {
 		panic(err)
 	}
-	isLeader := true
+	s.Set(seqPath,dispatcherInfoToData(s))
+	isLeader := leader==seqPath
+	log.Println("leader=",leader,"seqPath=",seqPath)
 	leaderAddr := ""
-	if event != nil {
-		isLeader = false
-		go func() {
-			<-event
-			s.onBecomeDispatcherLeader()
-		}()
-	} else {
-		data, _, err := s.ZKConn().Get(leaderPath)
+	if isLeader==false {
+		log.Println(leader)
+		data, _, err := s.Get(leader)
 		if err != nil {
 			panic(err)
 		}
 		info := dispatcherInfoFromData(data)
 		leaderAddr = info.Addr
+
+	} else {
+		go func() {
+			<-event
+			s.onBecomeDispatcherLeader()
+		}()
 	}
-	s.dispatcher = newDispatcher(s, s.Context(), isLeader, leaderAddr)
+	log.Println(isLeader,leaderAddr)
+	s.dispatcher,err = newDispatcher(s, s.Context(), isLeader, leaderAddr)
+	if err!=nil {
+		panic(err)
+	}
+	s.Context().startActor(s.dispatcher)
 	s.Context().actors[dispatcher_path] = s.dispatcher
 }
 func (s *System) onBecomeDispatcherLeader() {
 	s.Context().stopActor(s.dispatcher)
 	s.Context().onDispatcherDisable()
-	s.dispatcher = newDispatcher(s, s.Context(), true, "")
+	var err error
+	s.dispatcher,err= newDispatcher(s, s.Context(), true, "")
+	if err!=nil {
+		panic(err)
+	}
+
 	s.Context().onDispatcherEnable()
 }
 
@@ -237,7 +268,7 @@ type dispatcherInfo struct {
 	Addr string
 }
 
-func dispatcherInfoData(s *System) []byte {
+func dispatcherInfoToData(s *System) []byte {
 	info := &dispatcherInfo{
 		s.displayName,
 		s.laddr,
@@ -258,15 +289,13 @@ func dispatcherInfoFromData(data []byte) *dispatcherInfo {
 func dispatcherIndex(addr string, dispatcherSize int) int {
 	h := fnv.New64()
 	h.Write([]byte(addr))
-	return h.Sum64() % dispatcherSize
+	return int(h.Sum64() % uint64(dispatcherSize))
 }
 
 type leader struct {
 	name string
 	addr string
 }
-
-var leader leader
 
 func (sys *System) onLeaderChanged() {
 
@@ -286,6 +315,30 @@ func randName() (name string) {
 
 func (s *System) ZKConn() *zk.Conn {
 	return s.zkConn
+	/*for {
+		zookeeperServers := s.conf.ZookeeperServers
+		d, _ := time.ParseDuration("24h")
+		var err error
+		conn, _, err := zk.Connect(zookeeperServers, d)
+		if err != nil {
+			//log.Println(err)
+			continue
+		}
+		s.zkConn=conn
+		return s.zkConn
+	}*/
+}
+
+func (s *System) Set(path string,data []byte){
+	s.ZKConn().Set(path,dispatcherInfoToData(s),int32(0))
+}
+
+func (s *System) Get(path string)([]byte, *zk.Stat, error){
+	return s.ZKConn().Get(path)
+}
+
+func (s *System) Children(path string)([]string, *zk.Stat, error){
+	return s.ZKConn().Children(path)
 }
 
 func (s *System) setRole(set Role) {
@@ -296,6 +349,6 @@ func (s *System) unsetRole(unset Role) {
 	s.role = s.role ^ unset
 }
 
-func (s *System) isRole(role Role)bool{
-	return s.role & role > 0
+func (s *System) isRole(role Role) bool {
+	return s.role&role > 0
 }

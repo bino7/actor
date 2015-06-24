@@ -1,10 +1,9 @@
 package actor
 
 type Config struct {
-	servers          []string
-	zookeeperServers []string
-	tickTime         string
-	name             string
-	dispatcher_port  int
-	dispatcher_size  int
+	Servers          []string
+	ZookeeperServers []string
+	Name             string
+	DispatcherPort   int
+	DispatcherSize   int
 }

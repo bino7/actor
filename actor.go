@@ -14,12 +14,12 @@ type Actor interface {
 
 	/*implement by BaseActor*/
 	Path() string
-	Parent() *Actor /*who created this actor */
+	Parent() Actor /*who created this actor */
 	System() *System
 	Context() *Context
-	events() chan Event
-	Tell(msg interface{})
-	mailbox() <-chan interface{}
+	events() chan interface{}
+	Tell(msg interface{})error
+	mailbox() chan interface{}
 	handle(msg interface{})
 }
 
@@ -27,8 +27,8 @@ type Handler interface{}
 
 type BaseActor struct {
 	path     string
-	mailbox  chan interface{}
-	events   chan Event
+	messageChan  chan interface{}
+	eventChan   chan interface{}
 	parent   Actor
 	system   *System
 	context  *Context
@@ -37,11 +37,11 @@ type BaseActor struct {
 	mutex    *sync.Mutex
 }
 
-func NewBaseActor(system *System, context *Context, parent *Actor, path string) *BaseActor {
+func NewBaseActor(system *System, context *Context, parent Actor, path string) *BaseActor {
 	return &BaseActor{
-		path:     "",
-		mailbox:  make(chan interface{}, 10),
-		events:   make(chan Event),
+		path:     path,
+		messageChan:  make(chan interface{}, 10),
+		eventChan:   make(chan interface{}),
 		parent:   parent,
 		system:   system,
 		context:  context,
@@ -54,7 +54,7 @@ func NewBaseActor(system *System, context *Context, parent *Actor, path string) 
 func (a *BaseActor) Path() string {
 	return a.path
 }
-func (a *BaseActor) Parent() *Actor {
+func (a *BaseActor) Parent() Actor {
 	return a.parent
 }
 func (a *BaseActor) System() *System {
@@ -63,8 +63,8 @@ func (a *BaseActor) System() *System {
 func (a *BaseActor) Context() *Context {
 	return a.context
 }
-func (a *BaseActor) Tell(msg interface{}) {
-	a.Context.Tell(a.Path(), msg)
+func (a *BaseActor) Tell(msg interface{})error{
+	return a.Context().Tell(a.Path(), msg)
 }
 
 func (a *BaseActor) AddHandler(_type reflect.Type, handlers ...Handler) {
@@ -96,4 +96,12 @@ func (a *BaseActor) handle(msg interface{}) {
 
 func (a *BaseActor) ZooPath() string {
 	return system_path + a.Path()[len("/system"):len(a.Path())]
+}
+
+func (a *BaseActor) events() chan interface{}{
+	return a.eventChan
+}
+
+func (a *BaseActor) mailbox() chan interface{}{
+	return a.messageChan
 }

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/gob"
 	"errors"
-	"reflect"
 	"sync"
 	"time"
 )
@@ -18,10 +17,12 @@ func (e ActorNoFoundError) Error() string {
 }
 
 type Context struct {
-	system *System
-	conf   Config
-	actors map[string]Actor
-	mutex  sync.Mutex
+	system 		*System
+	conf   		Config
+	actors 		map[string]Actor
+	encoders 	map[string]func(value interface{})([]byte,error)
+	decoders	map[string]func(data []byte)(interface{},error)
+	mutex  		sync.Mutex
 }
 
 func (c *Context) Tell(path string, message interface{}) error {
@@ -39,7 +40,7 @@ func (c *Context) startActor(a Actor) error {
 	if err := a.PreStart(); err != nil {
 		return err
 	}
-	go func() error {
+	go func(){
 		for {
 			select {
 			case msg := <-a.mailbox():
@@ -66,24 +67,34 @@ func (c *Context) startActor(a Actor) error {
 
 		}
 	}()
+	return nil
 }
 
 func (c *Context) stopActor(a Actor) error {
 	a.events() <- StopEvent
 	return a.PreStop()
 }
-func (c *Context) LocalActorOf(path string, _type reflect.Type, props map[string]interface{}) (*Actor, error) {
-	newObjPtr := reflect.New(_type.Elem()).Interface()
-	a := newObjPtr.(Actor)
-	if err := a.Init(props); err != nil {
-		return nil, err
+
+func (c *Context) ActorOf(path string, actor Actor) (bool, error) {
+	a:=c.ActorSelection(path)
+	if a!=nil{
+		return false,ActorExistedError
 	}
-	c.actors[path] = a
-	c.startActor(a)
-	return a, nil
-}
-func (c *Context) ActorOf(path string, ty reflect.Type, props map[string]interface{}) (*Actor, error) {
-	if a := c.actors[path]; a != nil {
+	/*create new actor*/
+	created := createEphemeralDirectory(c.system, path)
+	if created == false {
+		return false, nil
+	}
+	info:=& ActorInfo{
+		c.system.displayName,
+		c.system.laddr,
+	}
+	data,_:=ActorInfoEncode(info)
+	c.system.Set(path,data)
+	c.actors[path]=actor
+	c.startActor(actor)
+	return true,nil
+	/*if a := c.actors[path]; a != nil {
 		return a, nil
 	}
 
@@ -108,27 +119,38 @@ func (c *Context) ActorOf(path string, ty reflect.Type, props map[string]interfa
 	}
 
 	newObjPtr := reflect.New(ty.Elem()).Interface()
-	a := newObjPtr.(Actor)
+	ba:=newObjPtr.(BaseActor)
+	ba.system=c.system
+	ba.context=c
+	ba.parent=nil
+	ba.path=path
+	a := ba.(Actor)
 	err = a.Init(props)
-	return a, err
+	return a, err*/
 }
 
-func (c *Context) ActorSelection(path string) *Actor {
+func (c *Context) ActorSelection(path string) Actor {
 	a := c.actors[path]
 	if a == nil && isExist(c.system, path) {
-		a = newRemoteActor(c.system, c, path)
+		data,_,_:=c.system.Get(path)
+		value,_:=ActorInfoDecode(data)
+		info:=value.(*ActorInfo)
+		sysname:=info.SysName
+		addr:=info.Addr
+		a = newRemoteActor(c.system, c, path,sysname,addr)
+		c.actors[path]=a
+		c.startActor(a)
 	}
 	return a
 }
 
 func (c *Context) readActorInfo(path string) (*ActorInfo, error) {
-	zkConn := c.system.ZKConn()
-	if b, _, err := zkConn.Get(path); err != nil {
+	if b, _, err := c.system.Get(path); err != nil {
 		return nil, err
 	} else {
 		buf := bytes.NewBuffer(b)
 		dec := gob.NewDecoder(buf)
-		var ai ActorInfo
+		ai :=new(ActorInfo)
 		dec.Decode(&ai)
 		return ai, nil
 	}
@@ -140,8 +162,41 @@ func (c *Context) onDispatcherDisable() {
 
 }
 
+func (c *Context) RegisterEncoder(name string,encoder func(value interface{})([]byte,error)){
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.encoders[name]=encoder
+}
+func (c *Context) RegisterDecoder(name string,decoder func(data []byte)(interface{},error)){
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.decoders[name]=decoder
+}
+func (c *Context) Encode(name string,value interface{})([]byte,error){
+	encoder:=c.encoders[name]
+	if encoder==nil{
+		return nil,errors.New("encoder not found")
+	}
+	return encoder(value)
+}
+func (c *Context) Decode(name string,data []byte)(interface{},error){
+	decoder:=c.decoders[name]
+	if decoder==nil{
+		return nil,errors.New("decoder not found")
+	}
+	return decoder(data)
+}
+
 type ActorInfo struct {
-	Addr string
+	SysName	string
+	Addr 	string
+}
+func ActorInfoEncode(value *ActorInfo)([]byte,error){
+	return GobEncode(value)
+}
+func ActorInfoDecode(data []byte)(interface{},error){
+	info:=new(ActorInfo)
+	return GobDecode(data,info)
 }
 
 var (

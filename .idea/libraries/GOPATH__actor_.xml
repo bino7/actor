@@ -9,6 +9,7 @@
       <root url="file://$PROJECT_DIR$/../vivo" />
       <root url="file://$PROJECT_DIR$/../.idea" />
       <root url="file://$PROJECT_DIR$/../paxos" />
+      <root url="file://$PROJECT_DIR$/../actor2" />
       <root url="file://$PROJECT_DIR$/../imstor" />
       <root url="file://$PROJECT_DIR$/../console" />
       <root url="file://$PROJECT_DIR$/../martini" />

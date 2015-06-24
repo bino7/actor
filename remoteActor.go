@@ -6,27 +6,41 @@ import (
 
 type RemoteActor struct {
 	*BaseActor
-	path string
+	path 	string
+	sysname	string
+	addr 	string
 }
 
-func newRemoteActor(system *System, context *Context, path string) *RemoteActor {
+func newRemoteActor(system *System, context *Context, path string,sysname string,addr string) *RemoteActor {
 	return &RemoteActor{
 		NewBaseActor(system, context, system.dispatcher, path),
 		path,
+		sysname,
+		addr,
 	}
 
 }
 
 func (r *RemoteActor) Init(props map[string]interface{}) error { return nil }
-func (r *RemoteActor) Start() error {
+func (r *RemoteActor) PreStart() error {
 	return nil
 }
 func (r *RemoteActor) Receive(msg interface{}) {
-	if reflect.TypeOf(msg) != reflect.TypeOf(RemoteMessage{}) {
-		panic("RemoteActor only accept RemoteMessage")
+	tname:=reflect.TypeOf(msg).String()
+	data,err:=r.Context().Encode(tname,msg)
+	if err!=nil{
+		return
 	}
-	r.System().dispatcher.Tell(msg)
+	rmsg:=& RemoteMessage{
+		From:		"",
+		To:			r.path,
+		SysName: 	r.sysname,
+		Addr:		r.addr,
+		Type:		tname,
+		Data: 		data,
+	}
+	r.System().dispatcher.Tell(rmsg)
 }
-func (r *RemoteActor) Stop() error {
+func (r *RemoteActor) PreStop() error {
 	return nil
 }

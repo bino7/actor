@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"log"
 )
 
 type Lock struct {
@@ -17,48 +18,48 @@ var (
 	ZKParentDirectoryNotExistedError = errors.New("ZKParentDirectoryNotExistedError")
 )
 
-func sequent(sys *System, path string) (leaderPath string, event <-chan interface{}, err error) {
-	existed, _, err := sys.ZKConn().Exists(parentPath(path))
-	if err != nil {
-		return
+func sequent(sys *System, path string) (leader string,seqPath string, event <-chan zk.Event,err error) {
+	parent:=parentPath(path)
+	if parent!="" {
+		existed, _, zkErr := sys.ZKConn().Exists(parent)
+		if zkErr != nil {
+			err=zkErr
+			return
+		}
+		if existed == false {
+			err = ZKParentDirectoryNotExistedError
+			return
+		}
 	}
-	if existed == false {
-		err = ZKParentDirectoryNotExistedError
-		return
-	}
-	seqPath, err := sys.ZKConn().Create(path, []byte{}, zk.FlagEphemeralSequential, acl)
+
+	seqPath, err = sys.ZKConn().Create(path, []byte{}, zk.FlagEphemeralSequential, acl)
 	if err != nil {
 		return
 	}
 
-	children, _, _ := sys.ZKConn().Children(path)
+	children, _, _ := sys.ZKConn().Children(parent)
 	seq := Seq{children}
 	sort.Sort(seq)
+	leader=parent+"/"+children[0]
 	index := 0
 	for i, l := range children {
-		if l == seqPath {
+		if parent+"/"+l == seqPath {
 			index = i
 			break
 		}
 	}
-
-	if index == 0 {
-		leaderPath = seqPath
-		return
-	} else {
-		leaderPath = children[0]
+	if index>0 {
+		_, _, event, _ = sys.ZKConn().ExistsW(children[index-1])
 	}
-
-	_, _, event, _ = sys.ZKConn().ExistsW(children[index-1])
 	return
 
 }
-
-func lockDirectory(sys *System, path string) (*Lock, <-chan interface{}) {
+var dummyEvent = zk.Event{}
+func lockDirectory(sys *System, path string) (*Lock, <- chan zk.Event) {
 	lock_path, _ := sys.ZKConn().Create(path+"/lock", []byte{}, zk.FlagPersistent, acl)
 	p, _ := sys.ZKConn().Create(lock_path+"/", []byte{}, zk.FlagEphemeralSequential, acl)
 	lock := &Lock{
-		sys.ZKConn(),
+		sys,
 		lock_path,
 		p,
 	}
@@ -73,18 +74,21 @@ func lockDirectory(sys *System, path string) (*Lock, <-chan interface{}) {
 			break
 		}
 	}
-	event := make(<-chan interface{})
+
 	if index == 0 {
-		event <- new(interface{})
-		return lock, event
+		return lock, nil
 	}
 
-	_, _, event, _ = sys.ZKConn().ExistsW(children[index-1])
+	_, _, event, _ := sys.ZKConn().ExistsW(children[index-1])
 	return lock, event
 }
 
 func (lock *Lock) release() {
 	lock.sys.ZKConn().Delete(lock.path, int32(0))
+	parent:=parentPath(lock.path)
+	if parent!="" {
+		lock.sys.ZKConn().Delete(parentPath(lock.path), int32(0))
+	}
 }
 
 type Seq struct {
@@ -111,7 +115,10 @@ func (s Seq) Swap(i, j int) {
 }
 
 func isExist(sys *System, path string) bool {
-	existed, _, _ := sys.ZKConn().Exists(path)
+	existed, _, err := sys.ZKConn().Exists(path)
+	if err!=nil {
+		panic(err)
+	}
 	return existed
 }
 func createDirectory(sys *System, path string) bool {
@@ -121,17 +128,54 @@ func createDirectory(sys *System, path string) bool {
 	}
 
 	parent := parentPath(path)
-	if isExist(sys, parent) {
+	if isExist(sys, parent)==false {
 		createDirectory(sys, parent)
 	}
 
 	lock, event := lockDirectory(sys, parent)
 	defer lock.release()
-	<-event
+	if event!=nil {
+		<-event
+	}
+
 	if isExist(sys, path) {
 		return false
 	} else {
-		conn.Create(path, []byte{}, zk.FlagPersistent, acl)
+		path,err:=conn.Create(path, []byte{}, zk.FlagPersistent, acl)
+		if err!=nil {
+			panic(err)
+		}
+		log.Println(path,"created")
+	}
+
+	return true
+}
+
+func createEphemeralDirectory(sys *System, path string) bool {
+	conn := sys.ZKConn()
+	if isExist(sys, path) {
+		return false
+	}
+
+	parent := parentPath(path)
+	if isExist(sys, parent)==false {
+		createDirectory(sys, parent)
+	}
+
+	lock, event := lockDirectory(sys, parent)
+	defer lock.release()
+	if event!=nil {
+		<-event
+	}
+
+	if isExist(sys, path) {
+		return false
+	} else {
+		path,err:=conn.Create(path, []byte{}, zk.FlagEphemeral, acl)
+		if err!=nil {
+			panic(err)
+		}
+		log.Println(path,"created")
 	}
 
 	return true
@@ -140,7 +184,7 @@ func createDirectory(sys *System, path string) bool {
 func parentPath(path string) string {
 	i := strings.LastIndex(path, "/")
 	if i == 0 {
-		return nil
+		return ""
 	}
 	return path[0:i]
 }
